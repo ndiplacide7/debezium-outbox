@@ -1,0 +1,16 @@
+{
+  "customerId": 1,
+  "orderDate": "2024-06-01T10:00:00",
+  "lineItems": [
+    {
+      "item": "Debezium in Action",
+      "quantity": 2,
+      "totalPrice": 39.98
+    },
+    {
+      "item": "Designing Event-Driven Systems",
+      "quantity": 1,
+      "totalPrice": 29.99
+    }
+  ]
+}

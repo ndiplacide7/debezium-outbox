@@ -1,0 +1,166 @@
+services:
+
+  # ─────────────────────────────────────────────
+  # KAFKA (KRaft mode — no Zookeeper needed)
+  # Uses the official Apache Kafka image (3.8.0)
+  # ─────────────────────────────────────────────
+  kafka:
+    image: apache/kafka:3.8.0
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft: this single node acts as both broker and controller
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+
+      # PLAINTEXT = broker-to-broker and client traffic
+      # CONTROLLER = internal KRaft metadata quorum traffic
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # Single-node dev defaults
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+      # Required by KRaft: a stable cluster identity (base64 UUID, 22 chars)
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ─────────────────────────────────────────────
+  # KAFKA UI — browse topics, messages, consumers
+  # http://localhost:8090
+  # ─────────────────────────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────
+  # ORDER SERVICE DATABASE (PostgreSQL 16)
+  # wal_level=logical is REQUIRED for Debezium CDC
+  # ─────────────────────────────────────────────
+  order-db:
+    image: postgres:16
+    container_name: order-db
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: orderdb
+      POSTGRES_USER: postgresuser
+      POSTGRES_PASSWORD: postgrespw
+    # Enable logical replication — Debezium reads the WAL via this level
+    command: ["postgres", "-c", "wal_level=logical"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgresuser -d orderdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─────────────────────────────────────────────
+  # SHIPMENT SERVICE DATABASE (PostgreSQL 16)
+  # Separate DB — each service owns its own data
+  # ─────────────────────────────────────────────
+  shipment-db:
+    image: postgres:16
+    container_name: shipment-db
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_DB: shipmentdb
+      POSTGRES_USER: postgresuser
+      POSTGRES_PASSWORD: postgrespw
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgresuser -d shipmentdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─────────────────────────────────────────────
+  # DEBEZIUM KAFKA CONNECT
+  # Runs PostgreSQL CDC connector + EventRouter SMT
+  # API: http://localhost:8083
+  # ─────────────────────────────────────────────
+  connect:
+    image: quay.io/debezium/connect:2.7
+    container_name: connect
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: "1"
+      CONFIG_STORAGE_TOPIC: connect-configs
+      OFFSET_STORAGE_TOPIC: connect-offsets
+      STATUS_STORAGE_TOPIC: connect-status
+      CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      STATUS_STORAGE_REPLICATION_FACTOR: "1"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      order-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  # ─────────────────────────────────────────────
+  # ORDER SERVICE (Spring Boot)
+  # REST API: http://localhost:8080
+  # ─────────────────────────────────────────────
+  order-service:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    container_name: order-service
+    ports:
+      - "8085:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://order-db:5432/orderdb
+      SPRING_DATASOURCE_USERNAME: postgresuser
+      SPRING_DATASOURCE_PASSWORD: postgrespw
+    depends_on:
+      order-db:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────
+  # SHIPMENT SERVICE (Spring Boot)
+  # Consumes Order.events topic from Kafka
+  # ─────────────────────────────────────────────
+  shipment-service:
+    build:
+      context: ./shipment-service
+      dockerfile: Dockerfile
+    container_name: shipment-service
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://shipment-db:5432/shipmentdb
+      SPRING_DATASOURCE_USERNAME: postgresuser
+      SPRING_DATASOURCE_PASSWORD: postgrespw
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      shipment-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
