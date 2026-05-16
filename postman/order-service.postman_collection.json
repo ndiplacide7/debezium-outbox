@@ -1,0 +1,480 @@
+{
+  "info": {
+    "name": "Order Service — Debezium Outbox",
+    "description": "Full test suite for the Order Service REST API.\n\nEach request covers a distinct scenario (happy path or error path).\nAfter running 'Create Order (single item)' or 'Create Order (multiple items)', copy the returned `id` and `lineItems[0].id` into the collection variables `orderId` and `lineId` to run the update scenarios.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "debezium-outbox-v1"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "orderId",
+      "value": "1",
+      "description": "Update this after creating an order",
+      "type": "string"
+    },
+    {
+      "key": "lineId",
+      "value": "1",
+      "description": "Update this with a lineItems[].id from the create response",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "POST /orders — Create Order",
+      "description": "All scenarios for order creation. Line items always start with status ENTERED. Two outbox events are written per call: OrderCreated + InvoiceCreated.",
+      "item": [
+        {
+          "name": "✅ Create order — single item (happy path)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has order id', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.id).to.be.a('number');",
+                  "    pm.collectionVariables.set('orderId', body.id);",
+                  "    pm.collectionVariables.set('lineId', body.lineItems[0].id);",
+                  "});",
+                  "pm.test('Line status is ENTERED', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.lineItems[0].status).to.eql('ENTERED');",
+                  "});",
+                  "pm.test('customerId matches request', () => {",
+                  "    pm.expect(pm.response.json().customerId).to.eql(42);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": 42,\n  \"orderDate\": \"2026-05-14T10:30:00\",\n  \"lineItems\": [\n    {\n      \"item\": \"Laptop\",\n      \"quantity\": 1,\n      \"totalPrice\": 1299.99\n    }\n  ]\n}"
+            },
+            "url": {"raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"]}
+          }
+        },
+        {
+          "name": "✅ Create order — multiple items (happy path)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has 3 line items', () => {",
+                  "    pm.expect(pm.response.json().lineItems).to.have.lengthOf(3);",
+                  "});",
+                  "pm.test('All lines are ENTERED', () => {",
+                  "    pm.response.json().lineItems.forEach(l => pm.expect(l.status).to.eql('ENTERED'));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": 7,\n  \"orderDate\": \"2026-05-14T14:00:00\",\n  \"lineItems\": [\n    {\n      \"item\": \"Keyboard\",\n      \"quantity\": 2,\n      \"totalPrice\": 89.99\n    },\n    {\n      \"item\": \"Mouse\",\n      \"quantity\": 2,\n      \"totalPrice\": 39.99\n    },\n    {\n      \"item\": \"Monitor\",\n      \"quantity\": 1,\n      \"totalPrice\": 499.99\n    }\n  ]\n}"
+            },
+            "url": {"raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"]}
+          }
+        },
+        {
+          "name": "✅ Create order — boundary (1 item, minimum price)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('totalPrice accepted as 0.01', () => {",
+                  "    pm.expect(pm.response.json().lineItems[0].totalPrice).to.eql(0.01);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": 1,\n  \"orderDate\": \"2026-01-01T00:00:00\",\n  \"lineItems\": [\n    {\n      \"item\": \"Sticker\",\n      \"quantity\": 1,\n      \"totalPrice\": 0.01\n    }\n  ]\n}"
+            },
+            "url": {"raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"]}
+          }
+        },
+        {
+          "name": "❌ Create order — missing customerId (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderDate\": \"2026-05-14T10:30:00\",\n  \"lineItems\": [\n    {\n      \"item\": \"Laptop\",\n      \"quantity\": 1,\n      \"totalPrice\": 1299.99\n    }\n  ]\n}"
+            },
+            "url": {"raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"]}
+          }
+        },
+        {
+          "name": "❌ Create order — missing orderDate (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": 42,\n  \"lineItems\": [\n    {\n      \"item\": \"Laptop\",\n      \"quantity\": 1,\n      \"totalPrice\": 1299.99\n    }\n  ]\n}"
+            },
+            "url": {"raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"]}
+          }
+        },
+        {
+          "name": "❌ Create order — empty lineItems array (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": 42,\n  \"orderDate\": \"2026-05-14T10:30:00\",\n  \"lineItems\": []\n}"
+            },
+            "url": {"raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"]}
+          }
+        },
+        {
+          "name": "❌ Create order — empty body (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {"raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"]}
+          }
+        },
+        {
+          "name": "❌ Create order — no Content-Type header (415)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 415 Unsupported Media Type', () => pm.response.to.have.status(415));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": 42,\n  \"orderDate\": \"2026-05-14T10:30:00\",\n  \"lineItems\": [{\"item\":\"x\",\"quantity\":1,\"totalPrice\":1}]\n}"
+            },
+            "url": {"raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "PUT /orders/{orderId}/lines/{lineId} — Update Order Line",
+      "description": "All scenarios for order line status updates. Run a 'Create Order' request first and make sure the orderId / lineId collection variables are set.",
+      "item": [
+        {
+          "name": "✅ Cancel order line — ENTERED → CANCELLED (happy path)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Target line is CANCELLED', () => {",
+                  "    const lineId = parseInt(pm.collectionVariables.get('lineId'));",
+                  "    const line = pm.response.json().lineItems.find(l => l.id === lineId);",
+                  "    pm.expect(line.status).to.eql('CANCELLED');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newStatus\": \"CANCELLED\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}/lines/{{lineId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "{{orderId}}", "lines", "{{lineId}}"]
+            }
+          }
+        },
+        {
+          "name": "✅ Ship order line — ENTERED → SHIPPED (happy path)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Target line is SHIPPED', () => {",
+                  "    const lineId = parseInt(pm.collectionVariables.get('lineId'));",
+                  "    const line = pm.response.json().lineItems.find(l => l.id === lineId);",
+                  "    pm.expect(line.status).to.eql('SHIPPED');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newStatus\": \"SHIPPED\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}/lines/{{lineId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "{{orderId}}", "lines", "{{lineId}}"]
+            }
+          }
+        },
+        {
+          "name": "✅ Reset order line — any → ENTERED (happy path)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Target line is ENTERED', () => {",
+                  "    const lineId = parseInt(pm.collectionVariables.get('lineId'));",
+                  "    const line = pm.response.json().lineItems.find(l => l.id === lineId);",
+                  "    pm.expect(line.status).to.eql('ENTERED');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newStatus\": \"ENTERED\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}/lines/{{lineId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "{{orderId}}", "lines", "{{lineId}}"]
+            }
+          }
+        },
+        {
+          "name": "❌ Order not found (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newStatus\": \"CANCELLED\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/999999/lines/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "999999", "lines", "1"]
+            }
+          }
+        },
+        {
+          "name": "❌ Order line not found in existing order (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newStatus\": \"CANCELLED\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}/lines/999999",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "{{orderId}}", "lines", "999999"]
+            }
+          }
+        },
+        {
+          "name": "❌ Missing newStatus (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}/lines/{{lineId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "{{orderId}}", "lines", "{{lineId}}"]
+            }
+          }
+        },
+        {
+          "name": "❌ Invalid status value (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newStatus\": \"DELIVERED\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}/lines/{{lineId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "{{orderId}}", "lines", "{{lineId}}"]
+            }
+          }
+        },
+        {
+          "name": "❌ Non-numeric orderId in path (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400 or 404', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newStatus\": \"CANCELLED\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/abc/lines/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "abc", "lines", "1"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
